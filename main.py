@@ -8,6 +8,7 @@ import json
 import requests
 from flask import Flask
 from threading import Thread
+import asyncio
 
 # ===== Flask keep-alive (Replit) =====
 app = Flask('')
@@ -139,6 +140,9 @@ def has_allowed_role(interaction: discord.Interaction):
     roles_user = interaction.user.roles if hasattr(interaction.user, 'roles') else []
     return any(r.id == ALLOWED_ROLE_ID for r in roles_user)
 
+# ===== Lock for generatekey to avoid double DM =====
+generatekey_lock = asyncio.Lock()
+
 # ===== Events =====
 @bot.event
 async def on_ready():
@@ -156,20 +160,21 @@ async def generatekey(interaction: discord.Interaction, amount: int):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
         return
-    global keys
-    new_keys = []
-    for _ in range(amount):
-        new_key = generate_key()
-        while new_key in keys:
+    async with generatekey_lock:
+        global keys
+        new_keys = []
+        for _ in range(amount):
             new_key = generate_key()
-        keys[new_key] = False
-        new_keys.append(new_key)
-    save_keys(keys)
-    embed = discord.Embed(title="Generated keys", color=discord.Color.green())
-    for k in new_keys:
-        embed.add_field(name="Key", value=f"```{k}```", inline=False)
-    await interaction.user.send(embed=embed)
-    await interaction.response.send_message("Keys have been generated and sent to your DM!", ephemeral=True)
+            while new_key in keys:
+                new_key = generate_key()
+            keys[new_key] = False
+            new_keys.append(new_key)
+        save_keys(keys)
+        embed = discord.Embed(title="Generated keys", color=discord.Color.green())
+        for k in new_keys:
+            embed.add_field(name="Key", value=f"```{k}```", inline=False)
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Keys have been generated and sent to your DM!", ephemeral=True)
 
 @tree.command(name="wipekeys", description="Wipe all keys")
 async def wipekeys(interaction: discord.Interaction):
@@ -243,11 +248,11 @@ async def kick(interaction: discord.Interaction, username: str):
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
     if kick_from_group(user_id):
-        await interaction.response.send_message(f"User {username} has been kicked.", ephemeral=False)
+        await interaction.response.send_message(f"{username} has been kicked from the group.", ephemeral=False)
     else:
-        await interaction.response.send_message("Failed to kick user.", ephemeral=True)
+        await interaction.response.send_message("Failed to kick the user.", ephemeral=True)
 
-@tree.command(name="promote", description="Promote user in Roblox group")
+@tree.command(name="promote", description="Promote a user in the Roblox group")
 @app_commands.describe(username="Roblox username")
 async def promote(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
@@ -258,11 +263,11 @@ async def promote(interaction: discord.Interaction, username: str):
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
     if promote_in_group(user_id):
-        await interaction.response.send_message(f"User {username} has been promoted.", ephemeral=False)
+        await interaction.response.send_message(f"{username} has been promoted!", ephemeral=False)
     else:
-        await interaction.response.send_message("Failed to promote user.", ephemeral=True)
+        await interaction.response.send_message("Failed to promote the user.", ephemeral=True)
 
-@tree.command(name="demote", description="Demote user in Roblox group")
+@tree.command(name="demote", description="Demote a user in the Roblox group")
 @app_commands.describe(username="Roblox username")
 async def demote(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
@@ -273,13 +278,13 @@ async def demote(interaction: discord.Interaction, username: str):
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
     if demote_in_group(user_id):
-        await interaction.response.send_message(f"User {username} has been demoted.", ephemeral=False)
+        await interaction.response.send_message(f"{username} has been demoted!", ephemeral=False)
     else:
-        await interaction.response.send_message("Failed to demote user.", ephemeral=True)
+        await interaction.response.send_message("Failed to demote the user.", ephemeral=True)
 
-@tree.command(name="rank", description="Set user rank in Roblox group")
-@app_commands.describe(username="Roblox username", rank_name="Rank name")
-async def rank(interaction: discord.Interaction, username: str, rank_name: str):
+@tree.command(name="rank", description="Set user's rank in Roblox group")
+@app_commands.describe(username="Roblox username", rankname="Rank name")
+async def rank(interaction: discord.Interaction, username: str, rankname: str):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
         return
@@ -288,30 +293,28 @@ async def rank(interaction: discord.Interaction, username: str, rank_name: str):
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
     roles = get_group_roles()
-    target_role = next((r for r in roles if r["name"].lower() == rank_name.lower()), None)
-    if not target_role:
-        await interaction.response.send_message(f"Rank '{rank_name}' not found.", ephemeral=True)
+    rank_obj = next((r for r in roles if r["name"].lower() == rankname.lower()), None)
+    if not rank_obj:
+        await interaction.response.send_message(f"Rank '{rankname}' not found.", ephemeral=True)
         return
-    if set_user_role(user_id, target_role["id"]):
-        await interaction.response.send_message(f"User {username} has been set to rank {rank_name}.", ephemeral=False)
+    if set_user_role(user_id, rank_obj["id"]):
+        await interaction.response.send_message(f"{username} has been set to rank '{rankname}'.", ephemeral=False)
     else:
-        await interaction.response.send_message("Failed to set rank.", ephemeral=True)
+        await interaction.response.send_message("Failed to set the rank.", ephemeral=True)
 
-@tree.command(name="memberinfo", description="Get Roblox group member info")
+@tree.command(name="memberinfo", description="Get Roblox user group info")
 @app_commands.describe(username="Roblox username")
 async def memberinfo(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-        return
     user_id = get_user_id(username)
     if not user_id:
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
     role = get_user_role_in_group(user_id)
     if role:
-        await interaction.response.send_message(f"{username} is currently '{role['name']}' in the group.", ephemeral=False)
+        await interaction.response.send_message(f"{username} is in the group with role: {role['name']} (Rank: {role['rank']}).", ephemeral=False)
     else:
         await interaction.response.send_message(f"{username} is not in the group.", ephemeral=True)
 
+# ===== Run bot =====
 keep_alive()
 bot.run(TOKEN)
